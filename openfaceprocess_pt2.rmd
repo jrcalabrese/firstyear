@@ -1,0 +1,601 @@
+---
+title: 'OpenFace Process Pt2'
+author: "Julianna Calabrese"
+date: "2/19/2021 (last updated 3/22/2021)"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# PART 2 of 2
+
+At this point, we've merged all the csv files together into one dataframe. However, it's not appropriate for data analysis yet. We have a really really big dataframe, now we need to make it cleaner. 
+
+```{r}
+Sys.time()
+start.time <- Sys.time()
+```
+
+# Load in packages
+
+```{r}
+library(plyr)
+library(dplyr)
+library(tidyverse)
+library(lessR)
+library(purrr)
+library(reshape2)
+library(panelr)
+library(data.table)
+library(haven)
+library(foreign)
+library(foreach)
+library(zoo)
+```
+
+# Read in the data
+
+```{r}
+data <- read.csv("~/firstyearproject/openfaceprocess_pt1.csv")
+#data1 <- data
+
+# Are there any NA values?
+colSums(is.na(data))
+# Nope!
+
+# How many IDs are there?
+length(unique(data$clipID))
+# 48
+
+# Look at clipIDs
+print(unique(data$clipID))
+# No 135, 143, or 165
+# There is an ID 203
+
+# Clean up
+data$clipID <- as.factor(data$clipID)
+data$mother_side <- as.factor(data$mother_side)
+data$order <- as.numeric(as.character(data$order)) 
+# ^^^ I believe this is the cause of many problems...
+# I think making order a character, then numeric, might be the best bet
+data$frame_left <- as.integer(data$frame_left)
+data$frame_right <- as.integer(data$frame_left)
+data$face_id_left <- as.factor(data$face_id_left)
+data$face_id_right <- as.factor(data$face_id_right)
+
+# This turns timestamp, confidence, and success into integers
+# data[,7:12] <- sapply(data[,7:12],as.integer)
+# Actually, this is messing up my exclusion code, so maybe don't do this
+
+# I want all the AU variables to be numeric
+# since Nate's rf_pos_right variables are numeric
+data[,13:82] <- sapply(data[,13:82],as.numeric)
+
+#data_backup <- data # Just a backup in case of troubleshooting
+```
+
+# Read in survey and group membership data
+
+Group membership data tells us whether the daughter in the dyad is Depressed, Selfharm, or Control. 
+
+I want to merge group membership with OpenFace data before exclusion criteria so I can see what groups the excluded dyads are in.
+
+```{r}
+# Read in group membership data
+# membership <- read.csv("~/firstyearproject/group_membership.csv")
+# No need for membership anymore because I'll just take
+# group membership from the survey dataset
+
+# Read in survey data
+survey <- read_sav("~/firstyearproject/FinalDissertationData.sav")
+```
+
+# Merge face data with membership
+
+Be aware, the membership does not have ID 203, which is a self-harm dyad.
+
+```{r}
+# Merge face data with membership
+#data <- data %>% 
+  #mutate(ID = as.numeric(as.character(clipID))) %>%
+  #full_join(membership, by = "ID") %>% 
+  #na.omit()
+
+survey2 <- data.frame(survey$ID, survey$GroupLable)
+names(survey2)[names(survey2) == "survey.ID"] <- "ID"
+names(survey2)[names(survey2) == "survey.GroupLable"] <- "GROUP"
+survey2$GROUP[survey2$GROUP == "Depressed"] <- "depressed"
+survey2$GROUP[survey2$GROUP == "Control"] <- "control"
+survey2$GROUP[survey2$GROUP == "Self-Harm"] <- "self-harm"
+survey2$ID <- as.numeric(as.character(survey2$ID))
+
+data <- data %>% 
+  mutate(ID = as.numeric(as.character(clipID))) %>%
+  full_join(survey2, by = "ID") %>% 
+  na.omit()
+
+# Look at clipIDs
+print(unique(data$clipID))
+# No 135, 143, or 165
+```
+
+# Run exclusion criteria
+
+Here's a study that used OpenFace: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7048784/
+
+> "We excluded all frames that were either not tracked successfully or with confidence below 0.75."
+> ...
+> "First, we excluded every participant who was not tracked successfully in more than 90% of the frames or with a mean confidence below 0.75."
+
+This study first removed all frames/rows where success=0 and where all confidence <.75. But, if a participant, originally had 10+% rows where success=0 or a mean confidence of <.75, then that entire participant was removed. 
+
+To execute this criteria, it might be best to first remove entire dyads where unsuccess=10+% and mean confidence <.75, and *then* individually remove frames/rows where success=0 and confidence <.75. 
+
+I think I'm going to remove the exclusion criteria for now. Since Haines et al. (2019) used 47 dyads, I think it's best that this project also use the same 47 dyads.
+
+```
+## Remove entire bad dyads
+
+# How many IDs are there?
+length(unique(data$clipID))
+
+# Remove low confidence for right side
+unconfidenceright <- aggregate( confidence_right ~ clipID + GROUP, data, mean)
+unconfidencerightlist <- data.frame(unconfidenceright$clipID[unconfidenceright$confidence_right < .75])
+colnames(unconfidencerightlist) <- "unconfidence"
+#data <- data[ ! data$clipID %in% unconfidencerightlist$unconfidence, ]
+
+# Remove low confidence for left side
+unconfidenceleft <- aggregate( confidence_left ~ clipID + GROUP, data, mean)
+unconfidenceleftlist <- data.frame(unconfidenceleft$clipID[unconfidenceleft$confidence_left < .75])
+colnames(unconfidenceleftlist) <- "unconfidence"
+#data <- data[ ! data$clipID %in% unconfidenceleftlist$unconfidence, ]
+
+# Remove low success for right side
+unsuccessright <- aggregate( success_right ~ clipID + GROUP, data, mean)
+unsuccessrightlist <- data.frame(unsuccessright$clipID[unsuccessright$success_right < .90])
+colnames(unsuccessrightlist) <- "unsuccess"
+#data <- data[ ! data$clipID %in% unsuccessrightlist$unsuccess, ]
+
+# Remove low success for left side
+unsuccessleft <- aggregate( success_left ~ clipID + GROUP, data, mean)
+unsuccessleftlist <- data.frame(unsuccessleft$clipID[unsuccessleft$success_left < .90])
+colnames(unsuccessleftlist) <- "unsuccess"
+#data <- data[ ! data$clipID %in% unsuccessleftlist$unsuccess, ]
+
+# Do the big removal
+data <- data[ ! data$clipID %in% unconfidencerightlist$unconfidence, ]
+data <- data[ ! data$clipID %in% unconfidenceleftlist$unconfidence, ]
+data <- data[ ! data$clipID %in% unsuccessrightlist$unsuccess, ]
+data <- data[ ! data$clipID %in% unsuccessleftlist$unsuccess, ]
+
+# How many IDs are there?
+length(unique(data$clipID))
+
+# Is right side still good?
+aggregate( success_right ~ clipID, data, mean) # All should be above .90
+aggregate( confidence_right ~ clipID, data, mean) # All should be above .75
+
+# Is the left side still good?
+aggregate( success_left ~ clipID, data, mean) # All should be above .90
+aggregate( confidence_left ~ clipID, data, mean) # All should be above .75
+```
+
+```
+## Remove individual frames/rows that are bad
+
+# This is removing individual rows from dyads that are success=0 or confidence<.75
+# That weren't included dyads that were just straight up removed
+# This is kind of iffy because I'm really tearing apart the videos
+
+# Removing rows where success = 0 and confidence < .75
+
+data <- filter(data, 
+               success_left != 0 & success_right != 0 & # where success == 0
+               confidence_left > .75 & confidence_right > .75) # where confidence < .75
+
+# Is right side still good?
+aggregate( success_right ~ clipID, data, mean) # All should be above .90
+aggregate( confidence_right ~ clipID, data, mean) # All should be above .75
+
+# Is the left side still good?
+aggregate( success_left ~ clipID, data, mean) # All should be above .90
+aggregate( confidence_left ~ clipID, data, mean) # All should be above .75
+
+# How many IDs are there?
+length(unique(data$clipID))
+```
+
+```
+## Identify the bad dyads that we just removed
+
+# Put all the bad dyads in a list and rename columns in those lists
+colnames(unconfidencerightlist) <- "clipID"
+colnames(unconfidenceleftlist) <- "clipID"
+colnames(unsuccessrightlist) <- "clipID"
+colnames(unsuccessleftlist) <- "clipID"
+
+# Merge the bad stuff so we have clipID and GROUP as columns in the same dataframe
+# But here it's still split up by side and confidence/success
+unconfidencerightlist <- merge(unconfidencerightlist, unconfidenceright, by="clipID")
+unconfidenceleftlist <- merge(unconfidenceleftlist, unconfidenceleft, by="clipID")
+unsuccessrightlist <- merge(unsuccessrightlist, unsuccessright, by="clipID")
+unsuccessleftlist <- merge(unsuccessleftlist, unsuccessleft, by="clipID")
+
+# Remove these because we don't need them anymore
+rm(unconfidenceright)
+rm(unconfidenceleft)
+rm(unsuccessright)
+rm(unsuccessleft)
+
+# Merge those four dataframes vertically
+bad_dyads <- dplyr::bind_rows(unconfidencerightlist,
+                              unconfidenceleftlist,
+                              unsuccessrightlist,
+                              unsuccessleftlist,
+                              .id = "index")
+
+bad_dyads <- melt(bad_dyads, na.rm=TRUE)
+
+# Write out this list of bad_dyads to server
+write.csv(bad_dyads, "~/firstyearproject/bad_dyads.csv", row.names = FALSE)
+
+# One more check
+mean(data$success_left)
+mean(data$success_right)
+mean(data$confidence_left)
+mean(data$confidence_right)
+
+# Clean up
+rm(unsuccessleftlist)
+rm(unsuccessrightlist)
+rm(unconfidenceleftlist)
+rm(unconfidencerightlist)
+rm(bad_dyads)
+
+# Are there any NA values?
+colSums(is.na(data)) # Good!
+```
+
+# Loop through each dyad and identify mothers/daughters
+
+```{r}
+# Loop through each dyad and identify mothers/daughters
+#fit_dat$clipID <- as.factor(fit_dat$clipID)
+num_dyads <- length(unique(data$clipID))
+
+fit_dat <- foreach(i=1:num_dyads, .combine = "rbind") %do% {
+  tmp_subj <- data %>% 
+    filter(clipID==unique(clipID)[i]) %>% 
+    mutate(frame_mother   = ifelse(mother_side=="right", frame_left, frame_right),
+           frame_daughter   = ifelse(mother_side=="right", frame_right, frame_left),
+           face_id_mother   = ifelse(mother_side=="right", face_id_left, face_id_right),
+           face_id_daughter   = ifelse(mother_side=="right", face_id_right, face_id_left),
+           timestamp_mother   = ifelse(mother_side=="right", timestamp_left, timestamp_right),
+           timestamp_daughter   = ifelse(mother_side=="right", timestamp_right, timestamp_left),
+           confidence_mother   = ifelse(mother_side=="right", confidence_left, confidence_right),
+           confidence_daughter   = ifelse(mother_side=="right", confidence_right, confidence_left),
+           success_mother   = ifelse(mother_side=="right", success_left, success_right),
+           success_daughter   = ifelse(mother_side=="right", success_right, success_left),
+           AU01_r_mother   = ifelse(mother_side=="right", AU01_r_left, AU01_r_right),
+           AU01_r_daughter   = ifelse(mother_side=="right", AU01_r_right, AU01_r_left),
+           AU02_r_mother   = ifelse(mother_side=="right", AU02_r_left, AU02_r_right),
+           AU02_r_daughter   = ifelse(mother_side=="right", AU02_r_right, AU02_r_left),
+           AU04_r_mother   = ifelse(mother_side=="right", AU04_r_left, AU04_r_right),
+           AU04_r_daughter   = ifelse(mother_side=="right", AU04_r_right, AU04_r_left),
+           AU05_r_mother   = ifelse(mother_side=="right", AU05_r_left, AU05_r_right),
+           AU05_r_daughter   = ifelse(mother_side=="right", AU05_r_right, AU05_r_left),
+           AU06_r_mother   = ifelse(mother_side=="right", AU06_r_left, AU06_r_right),
+           AU06_r_daughter   = ifelse(mother_side=="right", AU06_r_right, AU06_r_left),
+           AU07_r_mother   = ifelse(mother_side=="right", AU07_r_left, AU07_r_right),
+           AU07_r_daughter   = ifelse(mother_side=="right", AU07_r_right, AU07_r_left),
+           AU09_r_mother   = ifelse(mother_side=="right", AU09_r_left, AU09_r_right),
+           AU09_r_daughter   = ifelse(mother_side=="right", AU09_r_right, AU09_r_left),
+           AU10_r_mother   = ifelse(mother_side=="right", AU10_r_left, AU10_r_right),
+           AU10_r_daughter   = ifelse(mother_side=="right", AU10_r_right, AU10_r_left),
+           AU12_r_mother   = ifelse(mother_side=="right", AU12_r_left, AU12_r_right),
+           AU12_r_daughter   = ifelse(mother_side=="right", AU12_r_right, AU12_r_left),
+           AU14_r_mother   = ifelse(mother_side=="right", AU14_r_left, AU14_r_right),
+           AU14_r_daughter   = ifelse(mother_side=="right", AU14_r_right, AU14_r_left),
+           AU15_r_mother   = ifelse(mother_side=="right", AU15_r_left, AU15_r_right),
+           AU15_r_daughter   = ifelse(mother_side=="right", AU15_r_right, AU15_r_left),
+           AU17_r_mother   = ifelse(mother_side=="right", AU17_r_left, AU17_r_right),
+           AU17_r_daughter   = ifelse(mother_side=="right", AU17_r_right, AU17_r_left),
+           AU20_r_mother   = ifelse(mother_side=="right", AU20_r_left, AU20_r_right),
+           AU20_r_daughter   = ifelse(mother_side=="right", AU20_r_right, AU20_r_left),
+           AU23_r_mother   = ifelse(mother_side=="right", AU23_r_left, AU23_r_right),
+           AU23_r_daughter   = ifelse(mother_side=="right", AU23_r_right, AU23_r_left),
+           AU25_r_mother   = ifelse(mother_side=="right", AU25_r_left, AU25_r_right),
+           AU25_r_daughter   = ifelse(mother_side=="right", AU25_r_right, AU25_r_left),
+           AU26_r_mother   = ifelse(mother_side=="right", AU26_r_left, AU26_r_right),
+           AU26_r_daughter   = ifelse(mother_side=="right", AU26_r_right, AU26_r_left),
+           AU45_r_mother   = ifelse(mother_side=="right", AU45_r_left, AU45_r_right),
+           AU45_r_daughter   = ifelse(mother_side=="right", AU45_r_right, AU45_r_left),
+           AU01_c_mother   = ifelse(mother_side=="right", AU01_c_left, AU01_c_right),
+           AU01_c_daughter   = ifelse(mother_side=="right", AU01_c_right, AU01_c_left),
+           AU02_c_mother   = ifelse(mother_side=="right", AU02_c_left, AU02_c_right),
+           AU02_c_daughter   = ifelse(mother_side=="right", AU02_c_right, AU02_c_left),
+           AU04_c_mother   = ifelse(mother_side=="right", AU04_c_left, AU04_c_right),
+           AU04_c_daughter   = ifelse(mother_side=="right", AU04_c_right, AU04_c_left),
+           AU05_c_mother   = ifelse(mother_side=="right", AU05_c_left, AU05_c_right),
+           AU05_c_daughter   = ifelse(mother_side=="right", AU05_c_right, AU05_c_left),
+           AU06_c_mother   = ifelse(mother_side=="right", AU06_c_left, AU06_c_right),
+           AU06_c_daughter   = ifelse(mother_side=="right", AU06_c_right, AU06_c_left),
+           AU07_c_mother   = ifelse(mother_side=="right", AU07_c_left, AU07_c_right),
+           AU07_c_daughter   = ifelse(mother_side=="right", AU07_c_right, AU07_c_right),
+           AU09_c_mother   = ifelse(mother_side=="right", AU09_c_left, AU09_c_right),
+           AU09_c_daughter   = ifelse(mother_side=="right", AU09_c_right, AU09_c_left),
+           AU10_c_mother   = ifelse(mother_side=="right", AU10_c_left, AU10_c_right),
+           AU10_c_daughter   = ifelse(mother_side=="right", AU10_c_right, AU10_c_left),
+           AU12_c_mother   = ifelse(mother_side=="right", AU12_c_left, AU12_c_right),
+           AU12_c_daughter   = ifelse(mother_side=="right", AU12_c_right, AU12_c_left),
+           AU14_c_mother   = ifelse(mother_side=="right", AU14_c_left, AU14_c_right),
+           AU14_c_daughter   = ifelse(mother_side=="right", AU14_c_right, AU14_c_left),
+           AU15_c_mother   = ifelse(mother_side=="right", AU15_c_left, AU15_c_right),
+           AU15_c_daughter   = ifelse(mother_side=="right", AU15_c_right, AU15_c_left),
+           AU17_c_mother   = ifelse(mother_side=="right", AU17_c_left, AU17_c_right),
+           AU17_c_daughter   = ifelse(mother_side=="right", AU17_c_right, AU17_c_left),
+           AU20_c_mother   = ifelse(mother_side=="right", AU20_c_left, AU20_c_right),
+           AU20_c_daughter   = ifelse(mother_side=="right", AU20_c_right, AU20_c_left),
+           AU23_c_mother   = ifelse(mother_side=="right", AU23_c_left, AU23_c_right),
+           AU23_c_daughter   = ifelse(mother_side=="right", AU23_c_right, AU23_c_left),
+           AU25_c_mother   = ifelse(mother_side=="right", AU25_c_left, AU25_c_right),
+           AU25_c_daughter   = ifelse(mother_side=="right", AU25_c_right, AU25_c_left),
+           AU26_c_mother   = ifelse(mother_side=="right", AU26_c_left, AU26_c_right),
+           AU26_c_daughter   = ifelse(mother_side=="right", AU26_c_right, AU26_c_left),
+           AU28_c_mother   = ifelse(mother_side=="right", AU28_c_left, AU28_c_right),
+           AU28_c_daughter   = ifelse(mother_side=="right", AU28_c_right, AU28_c_left),
+           AU45_c_mother   = ifelse(mother_side=="right", AU45_c_left, AU45_c_right),
+           AU45_c_daughter   = ifelse(mother_side=="right", AU45_c_right, AU45_c_left)) }
+                  # This is where I cut out a chunk of Nate's code
+                  # that mutated the emotion variables 
+                  # using tot_time/seg_time/seg_num/etc. to make it easier to 
+                  # smooth out the data over 10-second/minute chunks.
+                  # Instead, I do the smoothing in the very last part of this file.
+```
+
+```{r}
+# Look at clipIDs
+print(unique(fit_dat$clipID)) # Still got 48
+```
+
+# Sort data and create time variables
+
+The goal is to create two variables
+
+* seg_num: a sequence of numbers that corresponds to the order of a clipID
+* tot_num: a sequence of numbers for the clipID itself
+
+```{r}
+# Sort data so it's in the correct chronological order
+fit_dat <- arrange(fit_dat, clipID, order, frame_left)
+
+# Create seg_num
+fit_dat$seg_num <- with(fit_dat, ave(order, order, FUN = seq_along))
+
+# Create tot_num
+fit_dat$tot_num <- with(fit_dat, ave(as.numeric(clipID), as.numeric(clipID), FUN = seq_along))
+
+# Look at clipIDs
+print(unique(fit_dat$clipID)) # Still got 48
+```
+
+I think it's important to have these variables. It helps me make sure the data is in the right order.
+
+# Join with survey data, select out columns, standardize affect ratings 
+
+Should I run descriptive statistics here *before* I scale the AU data? I'll scale it now and will add descriptive stuff before here if I want to. 
+
+```{r}
+# A bit of clean up
+# fit_dat$clipID <- as.character(fit_dat$clipID) # Do I need this? Hmm...
+# I could clean up this file more...
+fit_dat$face_id_mother <- as.character(fit_dat$face_id_mother)
+fit_dat$face_id_daughter <- as.character(fit_dat$face_id_daughter)
+# Not sure if I need these lines anymore
+# but I'll keep them just in case
+
+# Join with survey data, select out columns, standardize affect ratings 
+fit_dat <- fit_dat %>%
+  left_join(survey, by = c("clipID" = "ID")) %>% 
+  filter(ID != 164) %>% # ID 164 is bad and we should remove it
+  dplyr::select(frame_mother, frame_daughter, 
+         face_id_mother, face_id_daughter, 
+         timestamp_mother, timestamp_daughter, 
+         confidence_mother, confidence_daughter, 
+         success_mother, success_daughter,
+         AU01_r_mother, AU01_r_daughter, 
+         AU02_r_mother, AU02_r_daughter, 
+         AU04_r_mother, AU04_r_daughter, 
+         AU05_r_mother, AU05_r_daughter, 
+         AU06_r_mother, AU06_r_daughter, 
+         AU07_r_mother, AU07_r_daughter, 
+         AU09_r_mother, AU09_r_daughter, 
+         AU10_r_mother, AU10_r_daughter, 
+         AU12_r_mother, AU12_r_daughter, 
+         AU14_r_mother, AU14_r_daughter, 
+         AU15_r_mother, AU15_r_daughter, # At this point I realize I could optimize this part of the code
+         AU17_r_mother, AU17_r_daughter, # and select just based on column number
+         AU20_r_mother, AU20_r_daughter, # Maybe later
+         AU23_r_mother, AU23_r_daughter, 
+         AU25_r_mother, AU25_r_daughter, 
+         AU26_r_mother, AU26_r_daughter, 
+         AU45_r_mother, AU45_r_daughter, 
+         AU01_c_mother, AU01_c_daughter, 
+         AU02_c_mother, AU02_c_daughter, 
+         AU04_c_mother, AU04_c_daughter, 
+         AU05_c_mother, AU05_c_daughter, 
+         AU06_c_mother, AU06_c_daughter, 
+         AU07_c_mother, AU07_c_daughter, 
+         AU09_c_mother, AU09_c_daughter, 
+         AU10_c_mother, AU10_c_daughter, 
+         AU12_c_mother, AU12_c_daughter, 
+         AU14_c_mother, AU14_c_daughter, 
+         AU15_c_mother, AU15_c_daughter, 
+         AU17_c_mother, AU17_c_daughter, 
+         AU20_c_mother, AU20_c_daughter, 
+         AU23_c_mother, AU23_c_daughter, 
+         AU25_c_mother, AU25_c_daughter, 
+         AU26_c_mother, AU26_c_daughter, 
+         AU28_c_mother, AU28_c_daughter, 
+         AU45_c_mother, AU45_c_daughter,
+         GROUP, ID, order, seg_num, tot_num) %>%
+  mutate(AU01_r_mother =  scale(AU01_r_mother), 
+         AU01_r_daughter =  scale(AU01_r_daughter), 
+         AU02_r_mother =  scale(AU02_r_mother), 
+         AU02_r_daughter =  scale(AU02_r_daughter), 
+         AU04_r_mother =  scale(AU04_r_mother), 
+         AU04_r_daughter =  scale(AU04_r_daughter), 
+         AU05_r_mother =  scale(AU05_r_mother), 
+         AU05_r_daughter =  scale(AU05_r_daughter), 
+         AU06_r_mother =  scale(AU06_r_mother), 
+         AU06_r_daughter =  scale(AU06_r_daughter), 
+         AU07_r_mother =  scale(AU07_r_mother), 
+         AU07_r_daughter =  scale(AU07_r_daughter), 
+         AU09_r_mother =  scale(AU09_r_mother), 
+         AU09_r_daughter =  scale(AU09_r_daughter), 
+         AU10_r_mother =  scale(AU10_r_mother), 
+         AU10_r_daughter =  scale(AU10_r_daughter), 
+         AU12_r_mother =  scale(AU12_r_mother), 
+         AU12_r_daughter =  scale(AU12_r_daughter), 
+         AU14_r_mother =  scale(AU14_r_mother), 
+         AU14_r_daughter =  scale(AU14_r_daughter), 
+         AU15_r_mother =  scale(AU15_r_mother), 
+         AU15_r_daughter =  scale(AU15_r_daughter), 
+         AU17_r_mother =  scale(AU17_r_mother), 
+         AU17_r_daughter =  scale(AU17_r_daughter), 
+         AU20_r_mother =  scale(AU20_r_mother), 
+         AU20_r_daughter =  scale(AU20_r_daughter), 
+         AU23_r_mother =  scale(AU23_r_mother), 
+         AU23_r_daughter =  scale(AU23_r_daughter), 
+         AU25_r_mother =  scale(AU25_r_mother), 
+         AU25_r_daughter =  scale(AU25_r_daughter), 
+         AU26_r_mother =  scale(AU26_r_mother), 
+         AU26_r_daughter =  scale(AU26_r_daughter), 
+         AU45_r_mother =  scale(AU45_r_mother), 
+         AU45_r_daughter =  scale(AU45_r_daughter)) # Take away the second ), add a comma
+         #AU01_c_mother =  scale(AU01_c_mother), # Do we really want to scale these _c variables though?
+         #AU01_c_daughter =  scale(AU01_c_daughter), # They're just binary
+         #AU02_c_mother =  scale(AU02_c_mother), 
+         #AU02_c_daughter =  scale(AU02_c_daughter), 
+         #AU04_c_mother =  scale(AU04_c_mother), 
+         #AU04_c_daughter =  scale(AU04_c_daughter), 
+         #AU05_c_mother =  scale(AU05_c_mother), 
+         #AU05_c_daughter =  scale(AU05_c_daughter), 
+         #AU06_c_mother =  scale(AU06_c_mother), 
+         #AU06_c_daughter =  scale(AU06_c_daughter), 
+         #AU07_c_mother =  scale(AU07_c_mother), 
+         #AU07_c_daughter =  scale(AU07_c_daughter), 
+         #AU09_c_mother =  scale(AU09_c_mother), 
+         #AU09_c_daughter =  scale(AU09_c_daughter), 
+         #AU10_c_mother =  scale(AU10_c_mother), 
+         #AU10_c_daughter =  scale(AU10_c_daughter), 
+         #AU12_c_mother =  scale(AU12_c_mother), 
+         #AU12_c_daughter =  scale(AU12_c_daughter), 
+         #AU14_c_mother =  scale(AU14_c_mother), 
+         #AU14_c_daughter =  scale(AU14_c_daughter), 
+         #AU15_c_mother =  scale(AU15_c_mother), 
+         #AU15_c_daughter =  scale(AU15_c_daughter), 
+         #AU17_c_mother =  scale(AU17_c_mother), 
+         #AU17_c_daughter =  scale(AU17_c_daughter), 
+         #AU20_c_mother =  scale(AU20_c_mother), 
+         #AU20_c_daughter =  scale(AU20_c_daughter), 
+         #AU23_c_mother =  scale(AU23_c_mother), 
+         #AU23_c_daughter =  scale(AU23_c_daughter), 
+         #AU25_c_mother =  scale(AU25_c_mother), 
+         #AU25_c_daughter =  scale(AU25_c_daughter), 
+         #AU26_c_mother =  scale(AU26_c_mother), 
+         #AU26_c_daughter =  scale(AU26_c_daughter), 
+         #AU28_c_mother =  scale(AU28_c_mother), 
+         #AU28_c_daughter =  scale(AU28_c_daughter), 
+         #AU45_c_mother =  scale(AU45_c_mother), 
+         #AU45_c_daughter =  scale(AU45_c_daughter))
+```
+
+```{r}
+# Look at clipIDs
+print(unique(fit_dat$ID))
+length(unique(fit_dat$ID))
+# We got rid of the terrible ID 164, so now we only have 47
+```
+
+# Just a little bit of clean up
+
+```{r}
+# Move seg_num to the front of the dataframe
+fit_dat <- fit_dat %>%
+  dplyr::select(seg_num, everything())
+
+# Move tot_num to the front of the dataframe
+fit_dat <- fit_dat %>%
+  dplyr::select(tot_num, everything())
+
+# Move order to the front of the dataframe
+fit_dat <- fit_dat %>%
+  dplyr::select(order, everything())
+
+# Move GROUP to the front of the dataframe
+fit_dat <- fit_dat %>%
+  dplyr::select(GROUP, everything())
+
+# Move ID to the front of the dataframe
+fit_dat <- fit_dat %>%
+  dplyr::select(ID, everything())
+
+# Are there any NA values?
+colSums(is.na(fit_dat)) # Good!
+
+# How many groups are there?
+# test <- plyr::ddply(fit_dat, .(ID, GROUP), summarize, mean=mean(ID))
+# ^ That is bad
+
+# test <- reshape2::melt(fit_dat, id.vars = c("ID", "GROUP"), na.rm=FALSE)
+# ^ That will kill your code, don't do that
+
+test <- aggregate(GROUP ~ ID, fit_dat, 
+                        function(x) paste(unique(x), collapse = '; '))
+print(table(test$GROUP))
+rm(test)
+# *** This is very important because it will impact your analyses
+# You don't want your exclusion criteria to knock out too many dyads in one group
+```
+
+# Smooth out data every n rows
+
+Take the average of every n rows without using `zoo::rollapply`. Just replace n with how many rows to smush together. Haines et al. (2019) did his using 10-second intervals. Since every 3 rows is 1 second, I'll do 30 rows.
+
+```{r}
+rm(data)
+fit_dat_unsmooth <- fit_dat
+
+# https://stackoverflow.com/questions/66482229/r-how-to-average-every-n-row-within-id-with-long-data
+
+# 30 rows is about 10 seconds
+fit_dat_smooth <- fit_dat %>% 
+  group_by(ID, GROUP, grp = as.integer(gl(n(), 30, # <- change that number if desired
+                                          n()))) %>% 
+  dplyr::summarise(across(starts_with(c('frame', 'AU')), mean), .groups = 'drop')
+```
+
+# Write out
+
+```{r}
+# A version that's smoothed out into 10 second intervals
+write.csv(fit_dat_smooth, "~/firstyearproject/openfaceprocess_pt2_smooth.csv", row.names = FALSE)
+
+# An unsmooth version that I can use or smooth later
+write.csv(fit_dat_unsmooth, "~/firstyearproject/openfaceprocess_pt2_unsmooth.csv", row.names = FALSE)
+```
+
+# How long did it take?
+
+```{r}
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+time.taken 
+```
+
+```{r}
+# Clean up
+rm(list=ls())
+```
