@@ -1,6 +1,6 @@
 # An archive of my firstyear project
 
-> Working Title: A pipeline for automated facial expression coding in dyads using OpenFace (feat. a replication study)
+> Working title: A pipeline for automated facial expression coding in dyads using OpenFace (feat. a replication study)
 
 ## Description
 
