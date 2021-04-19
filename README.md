@@ -1,4 +1,4 @@
-# My Firstyear Research Experience at Ohio State
+# An archive of my firstyear project
 
 > Working Title: A pipeline for automated facial expression coding in dyads using OpenFace (feat. a replication study)
 
