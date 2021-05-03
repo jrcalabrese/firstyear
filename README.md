@@ -10,4 +10,4 @@ This project will be presented to faculty and students on May 12th 2021. I will 
 
 ## Bounties 
 
-Brownie points awarded to anyone who finds errors or provides suggestions that would significantly optimize syntax. 
+Brownie points awarded to anyone who finds errors.
