@@ -1,0 +1,240 @@
+---
+title: "An attempt at vector autoregression"
+author: "Julianna Calabrese"
+date: "3/16/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r Libraries, include=FALSE}
+# Load in packages
+
+library(grid)
+library(tvReg)
+library(psych)
+library(dplyr)
+library(tidyverse)
+library(lessR)
+library(purrr)
+library(reshape2)
+library(panelr)
+library(data.table)
+library(haven)
+library(foreign)
+library(foreach)
+library(zoo)
+library(report)
+library(DiagrammeR)
+library(grDevices)
+library(sjPlot)
+library(lmerTest)
+library(brms)
+library(BVAR)
+library(bvartools)
+library(tsm)
+library(vars)
+library(astsa)
+library(mFilter)
+library(xts)
+library(mlVAR)
+library(rmdformats)
+library(crosstalk)
+library(kableExtra)
+library(pairwiseComparisons)
+library(foreign)
+library(Hmisc)
+library(arm)
+library(corrplot)
+library(emmeans)
+library(broom)
+library(ICSNP)
+options(scipen=99999)
+graphics.off()
+```
+
+```{r include=FALSE}
+# Read in data
+fit_dat_unsmooth <- read.csv("~/firstyearproject/openfaceprocess_pt2_unsmooth.csv")
+
+# Are there any NA values?
+colSums(is.na(fit_dat_unsmooth))
+
+# How many IDs are there?
+length(unique(fit_dat_unsmooth$ID))
+
+# Look at clipIDs
+print(unique(fit_dat_unsmooth$ID))
+
+# Is it the right class?
+class(fit_dat_unsmooth$AU01_r_daughter) # Should be numeric
+
+# Remove ID 164 because you should...
+fit_dat_unsmooth <- fit_dat_unsmooth[fit_dat_unsmooth$ID != 164, ]
+
+# Look at clipIDs
+print(unique(fit_dat_unsmooth$ID))
+
+# Fix stuff
+fit_dat_unsmooth$ID <- as.factor(fit_dat_unsmooth$ID)
+fit_dat_unsmooth$GROUP <- as.factor(fit_dat_unsmooth$GROUP)
+fit_dat_unsmooth$frame_mother <- as.numeric(fit_dat_unsmooth$frame_mother)
+```
+
+# Make it even smoother
+
+```{r}
+# 90 is about 30 seconds
+smoother_data <- fit_dat_unsmooth %>% 
+  group_by(ID, GROUP, grp = as.integer(gl(n(), 90, # <- change to smooth more or less
+                                          n()))) %>% 
+  dplyr::summarise(across(starts_with(c('frame', 'AU')), mean), .groups = 'drop')
+```
+
+# Code for presentation
+
+## Dyad 147 (Control)
+
+```{r}
+## Dyad 147 (Control)
+# Daughter is 17.4 years old
+
+# Subset data to only include relevant mother/daughter variables
+dyad_147 <- smoother_data %>%
+  filter(ID == c("147")) %>% 
+  dplyr::select(contains(c("06_r", "12_r", # Positive emotion
+                          "09_r", "10_r" # Negative emotion
+                           )))
+
+# Make sure it's a dataframe
+dyad_147 <- data.frame(dyad_147)  
+
+# Create a var object for the dyad
+varout <- VAR(dyad_147, p=1)
+
+# Look at it
+summary(varout)
+
+# Plot it
+plot(irf(varout), sub = "Dyad 147", plot.type="single")
+
+#plot(irf(varout))
+#serial.test(varout)
+#arch.test(varout)
+#rm(varout)
+```
+
+```{r}
+fit_dat_unsmooth %>% 
+  filter(ID == "147") %>% ggplot(.) +
+      stat_smooth(aes(x=frame_mother, y=AU12_r_mother, 
+                      color = "AU12_r_mother"), 
+                linetype="solid", lwd=.8) +
+      stat_smooth(aes(x=frame_mother, y=AU12_r_daughter, 
+                      color = "AU12_r_daughter"),
+                linetype="longdash", lwd=.8) +
+  xlab("Time") + ylab("Intensity") +
+  ggtitle("Dyad 147 (Control): Mother and Daughter AU12") +
+  #theme_minimal() + 
+  scale_color_discrete(name = "Dyad Member", 
+                       labels = c("Mother", "Daughter"))
+```
+
+## Dyad 146 (Depressed)
+
+```{r}
+## Dyad 146 (Depressed)
+# Daughter is 13.1 years old
+
+# Subset data to only include relevant mother/daughter variables
+dyad_146 <- smoother_data %>%
+  filter(ID == c("146")) %>% 
+  dplyr::select(contains(c("06_r", "12_r", # Positive emotion
+                          "09_r", "10_r" # Negative emotion
+                           )))
+
+# Make sure it's a dataframe
+dyad_146 <- data.frame(dyad_146)  
+
+# Create a var object for the dyad
+varout <- VAR(dyad_146, p=1)
+
+# Look at it
+summary(varout)
+
+# Plot it
+plot(irf(varout), sub = "Dyad 146", plot.type="single")
+
+#plot(irf(varout))
+#serial.test(varout)
+#arch.test(varout)
+#rm(varout)
+```
+
+```{r}
+fit_dat_unsmooth %>% 
+  filter(ID == "146") %>% ggplot(.) +
+      stat_smooth(aes(x=frame_daughter, y=AU06_r_daughter, 
+                      color = "AU06_r_daughter"), 
+                linetype="solid", lwd=.8) +
+      stat_smooth(aes(x=frame_daughter, y=AU12_r_daughter, 
+                      color = "AU12_r_daughter"),
+                linetype="solid", lwd=.8) +
+      stat_smooth(aes(x=frame_daughter, y=AU09_r_daughter, 
+                      color = "AU09_r_daughter"), 
+                linetype="solid", lwd=.8) +
+      stat_smooth(aes(x=frame_daughter, y=AU10_r_daughter, 
+                      color = "AU10_r_daughter"),
+                linetype="solid", lwd=.8) +
+  xlab("Time") + ylab("Intensity") +
+  ggtitle("Dyad 146 (Depressed): Daughter's AU06, AU09, AU10, AU12") +
+  #theme_minimal() +
+  scale_color_discrete(name = "Action Unit", 
+                       labels = c("AU06", "AU09", "AU10", "AU12"))
+```
+
+## Dyad 175 (Self-Harm)
+
+```{r}
+## Dyad 175 (Self-harm)
+# 175 daughter is 15.6 years old
+# Subset data to only include relevant mother/daughter variables
+dyad_175 <- smoother_data %>%
+  filter(ID == c("175")) %>% 
+  dplyr::select(contains(c("06_r", "12_r", # Positive emotion
+                          "09_r", "10_r" # Negative emotion
+                           )))
+
+# Make sure it's a dataframe
+dyad_175 <- data.frame(dyad_175)  
+
+# Create a var object for the dyad
+varout <- VAR(dyad_175, p=1)
+
+# Look at it
+summary(varout)
+
+# Plot it
+plot(irf(varout), sub = "Dyad 175", plot.type="single")
+
+#plot(irf(varout))
+#serial.test(varout)
+#arch.test(varout)
+#rm(varout)
+```
+
+```{r}
+fit_dat_unsmooth %>% 
+  filter(ID == "175") %>% ggplot(.) +
+      stat_smooth(aes(x=frame_daughter, y=AU10_r_mother, 
+                      color = "AU10_r_mother"), 
+                linetype="solid", lwd=.8) +
+      stat_smooth(aes(x=frame_daughter, y=AU12_r_daughter, 
+                      color = "AU12_r_daughter"),
+                linetype="longdash", lwd=.8) +
+  xlab("Time") + ylab("Intensity") +
+  ggtitle("Dyad 175 (Self-harm): Mother AU10, Daughter AU12") +
+  #theme_minimal() + 
+  scale_color_discrete(name = "Dyad AU", 
+                       labels = c("Mother AU10", "Daughter AU12"))
+```

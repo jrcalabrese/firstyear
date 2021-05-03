@@ -1,0 +1,796 @@
+---
+title: "OpenFace Analysis"
+author: "Julianna Calabrese"
+date: 'Last updated  `r format(Sys.time(), "%d %B %Y")`'
+output:
+  rmdformats::robobook:
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 9999)
+```
+
+# Introduction
+
+At this point, OpenFace has analyzed all the videos, the .csv files have been run through openfaceprocess_pt1 and openfaceprocess_pt2, and hopefully now the data is ready for analysis.
+
+```{r Libraries, include=FALSE}
+# Load in packages
+
+library(psych)
+library(dplyr)
+library(tidyverse)
+library(lessR)
+library(purrr)
+library(reshape2)
+library(panelr)
+library(data.table)
+library(haven)
+library(foreign)
+library(foreach)
+library(zoo)
+library(report)
+library(DiagrammeR)
+library(grDevices)
+library(sjPlot)
+library(lmerTest)
+library(brms)
+library(BVAR)
+library(bvartools)
+library(tsm)
+library(vars)
+library(astsa)
+library(mFilter)
+library(xts)
+library(mlVAR)
+library(rmdformats)
+library(crosstalk)
+library(kableExtra)
+library(pairwiseComparisons)
+library(foreign)
+library(Hmisc)
+library(arm)
+library(corrplot)
+library(emmeans)
+library(broom)
+library(ICSNP)
+library(rstatix)
+library(ggpubr)
+options(scipen=99999)
+graphics.off()
+```
+
+```{r include=FALSE}
+# Read in data
+fit_dat_smooth <- read.csv("~/firstyearproject/openfaceprocess_pt2_smooth.csv")
+
+# Are there any NA values?
+colSums(is.na(fit_dat_smooth))
+
+# How many IDs are there?
+length(unique(fit_dat_smooth$ID))
+
+# Look at clipIDs
+print(unique(fit_dat_smooth$ID))
+
+# Is it the right class?
+class(fit_dat_smooth$AU01_r_daughter) # Should be numeric
+
+# Remove ID 164 because you should...
+fit_dat_smooth <- fit_dat_smooth[fit_dat_smooth$ID != 164, ]
+
+# Look at clipIDs
+print(unique(fit_dat_smooth$ID))
+```
+
+# OpenFace/FPPC Correlations
+
+```{r include=FALSE}
+# Read in survey data
+survey <- read_sav("~/firstyearproject/FinalDissertationData.sav")
+
+survey <- survey %>% 
+  dplyr::select(ends_with(c("ID", "_HI", "_IN", "_LW", "TOTAV", "TOTE")))
+
+# Merge OpenFace data with FPPC data
+merge <- merge(fit_dat_smooth, survey)
+
+# Get rid of AUs we don't need the absence/presence variables
+merge <- merge %>% 
+  dplyr::select(-contains(c("01", "02", "07", "14", "15", 
+                     "17", "20", "23", "26", "45", "_c_",
+                     "pADHDID", "cADHDID", "SCID", "cSHvalid"))) 
+                      #idk how those got in there
+ 
+# Make a dataframe for daughter variables
+daughter <- merge %>% 
+  dplyr::select(contains(c("_r_daughter", "T_")))
+
+# Make a dataframe for mother variables
+mother <- merge %>% 
+  dplyr::select(contains(c("_r_mother", "M_")))
+
+# Make one with both mothers and daughters
+corr <- merge %>% 
+  dplyr::select(-contains(c("ID", "GROUP", "grp", "frame")))
+```
+
+```{r include=FALSE}
+average <- merge %>% 
+  dplyr::select(-contains(c("grp", "frame")))
+
+average <- average %>% 
+  group_by(ID, GROUP) %>% 
+  summarise_all(mean)
+
+average_merge <- merge(average, survey)
+
+average_merge <- average_merge %>% 
+  dplyr::select(-contains(c("01", "02", "07", "14", "15", 
+                     "17", "20", "23", "26", "45", "_c_",
+                     "pADHDID", "cADHDID", "SCID", "cSHvalid")))
+
+average_merge <- average_merge %>% 
+  dplyr::select(-contains(c("ID", "GROUP", "grp", "frame")))
+
+# Reorganize the dataframe
+# so average_merge and corr are in the same order
+average_merge <- average_merge %>%
+  dplyr::select(-M_HI, everything())
+
+average_merge <- average_merge %>%
+  dplyr::select(-T_HI, everything())
+
+average_merge <- average_merge %>%
+  dplyr::select(-M_TOTAV, everything())
+
+average_merge <- average_merge %>%
+  dplyr::select(-T_TOTAV, everything())
+
+average_merge <- average_merge %>%
+  dplyr::select(-M_TOTE, everything())
+
+average_merge <- average_merge %>%
+  dplyr::select(-T_TOTE, everything())
+```
+
+```{r}
+glimpse(average_merge)
+arm::corrplot(average_merge, color=TRUE)
+```
+
+```{r include=FALSE}
+# Goes off the page
+tab_corr(average_merge,
+         title = "FPPC/AFEC Total Correlation Table",
+         triangle = "lower",
+         digits = 2,
+         p.numeric = FALSE,
+         remove.spaces = TRUE,
+         use.viewer = TRUE)
+```
+
+```{r include=FALSE}
+rm(list = setdiff(ls(), "fit_dat_smooth"))
+```
+
+# Average affect intensity
+
+```{r include=FALSE}
+# Read in data
+fit_dat_smooth <- read.csv("~/firstyearproject/openfaceprocess_pt2_smooth.csv")
+
+here <- fit_dat_smooth %>%
+  dplyr::group_by(GROUP) %>%
+  dplyr::summarise_at(vars(-ID, -grp, -frame_mother, -frame_daughter), 
+                           #-AgeChild), 
+                      funs(mean(., na.rm=TRUE)))
+
+# Want to remove the extra columns?
+here <- here %>%
+  dplyr::select(-contains(c("AU01_r_mother", "AU02_r_mother", "AU07_r_mother",
+                "AU14_r_mother", "AU15_r_mother", "AU17_r_mother",
+                "AU20_r_mother", "AU23_r_mother", "AU26_r_mother",
+                "AU45_r_mother", "AU01_r_daughter", "AU02_r_daughter", 
+                "AU07_r_daughter", "AU14_r_daughter", "AU15_r_daughter", 
+                "AU17_r_daughter", "AU20_r_daughter", "AU23_r_daughter", 
+                "AU26_r_daughter", "AU45_r_daughter")))
+
+here <- here %>% 
+  dplyr::select(-contains("_c_"))
+
+mother <- here %>% 
+  dplyr::select(-contains("daughter"))
+  
+daughter <- here %>% 
+  dplyr::select(-contains("mother"))
+
+here <- reshape2::melt(here, id.var = "GROUP")
+mother <- reshape2::melt(mother, id.var = "GROUP")
+daughter <- reshape2::melt(daughter, id.var = "GROUP")
+
+mother$variable <- as.character(mother$variable)
+daughter$variable <- as.character(daughter$variable)
+
+mother$GROUP[mother$GROUP == "depressed"] <- "Depressed"
+mother$GROUP[mother$GROUP == "self-harm"] <- "Self-Harm"
+mother$GROUP[mother$GROUP == "control"] <- "Control"
+
+mother$variable[mother$variable == "AU04_r_mother"] <- "AU04"
+mother$variable[mother$variable == "AU05_r_mother"] <- "AU05"
+mother$variable[mother$variable == "AU06_r_mother"] <- "AU06"
+mother$variable[mother$variable == "AU09_r_mother"] <- "AU09"
+mother$variable[mother$variable == "AU10_r_mother"] <- "AU10"
+mother$variable[mother$variable == "AU12_r_mother"] <- "AU12"
+mother$variable[mother$variable == "AU25_r_mother"] <- "AU25"
+
+daughter$GROUP[daughter$GROUP == "depressed"] <- "Depressed"
+daughter$GROUP[daughter$GROUP == "self-harm"] <- "Self-Harm"
+daughter$GROUP[daughter$GROUP == "control"] <- "Control"
+
+daughter$variable[daughter$variable == "AU04_r_daughter"] <- "AU04"
+daughter$variable[daughter$variable == "AU05_r_daughter"] <- "AU05"
+daughter$variable[daughter$variable == "AU06_r_daughter"] <- "AU06"
+daughter$variable[daughter$variable == "AU09_r_daughter"] <- "AU09"
+daughter$variable[daughter$variable == "AU10_r_daughter"] <- "AU10"
+daughter$variable[daughter$variable == "AU12_r_daughter"] <- "AU12"
+daughter$variable[daughter$variable == "AU25_r_daughter"] <- "AU25"
+```
+
+```{r echo=FALSE}
+ggplot(mother, aes(x=variable, y=value, fill=GROUP)) + 
+  geom_col() + 
+  #coord_flip() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1)) +
+  ylab(" ") + xlab(" ") + ggtitle("Mean Action Unit values for mothers")
+
+ggplot(daughter, aes(x=variable, y=value, fill=GROUP)) + 
+  geom_col() + 
+  #coord_flip() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1)) +
+  ylab(" ") + xlab(" ") + ggtitle("Mean Action Unit values for daughters")
+```
+
+```{r include=FALSE}
+rm(list = setdiff(ls(), "fit_dat_smooth"))
+```
+
+# Dyadic correspondence: Nate's models
+
+C1 --> control versus (depressed+self-harm)
+
+C2 --> depressed versus self-harm
+
+## Nate's positive emotion model
+
+```{r echo=TRUE}
+Nates_old_data <- read.csv("~/firstyearproject/Nates_old_data.csv")
+
+# Contrast matrix
+mat1 <- rbind(c(1, -0.5, -0.5), # control vs. (depressed + self-harm) / 2
+             c(0, -1, 1))       # depressed vs. self-harm
+cMat1 <- MASS::ginv(mat1)
+```
+
+```{r echo=TRUE}
+# Positive affect model
+fit_posFR <- lmer(pos_mother ~ pos_daughter * GROUP + (pos_daughter | ID),
+                  data = Nates_old_data,
+                  contrasts = list(GROUP = cMat1))
+```
+
+```{r echo=FALSE}
+fit_posFR <- lmer(pos_mother ~ pos_daughter * GROUP + (pos_daughter | ID),
+                  data = Nates_old_data,
+                  contrasts = list(GROUP = cMat1))
+
+tab_model(fit_posFR,
+          title = "Nate's model, predict mother's positive emotion with daughter's positive emotion",
+          pred.labels = c("Intercept's intercept", "Slope's intercept", 
+                          "Intercept C1", "Intercept C2", "Slope C1", "Slope C2"),
+          show.est = TRUE, string.est = "Coefficient",
+          show.stat = TRUE, string.stat = "t",
+          p.threshold = 0.05, p.style=c("numeric"),
+          show.ci = FALSE, show.se = TRUE, string.se = "SE",
+          digits = 2, digits.p = 3, emph.p = TRUE, wrap.labels=25,
+          order.terms = c(1, 3, 4, 2, 5, 6))
+```
+
+## Nate's negative emotion model
+
+```{echo=TRUE}
+# Negative affect model
+fit_negFR <- lmer(neg_mother ~ neg_daughter * GROUP + (neg_daughter | ID),
+                  data = Nates_old_data,
+                  contrasts = list(GROUP = cMat1))
+```
+
+```{r echo=FALSE}
+# Negative affect model
+fit_negFR <- lmer(neg_mother ~ neg_daughter * GROUP + (neg_daughter | ID),
+                  data = Nates_old_data,
+                  contrasts = list(GROUP = cMat1))
+
+tab_model(fit_negFR,
+          title = "Nate's model, predict mother's negative emotion with daughter's negative emotion",
+          pred.labels = c("Intercept's intercept", "Slope's intercept", 
+                          "Intercept C1", "Intercept C2", "Slope C1", "Slope C2"),
+          show.est = TRUE, string.est = "Coefficient",
+          show.stat = TRUE, string.stat = "t",
+          p.threshold = 0.05, p.style=c("numeric"),
+          show.ci = FALSE, show.se = TRUE, string.se = "SE",
+          digits = 2, digits.p = 3, emph.p = TRUE, wrap.labels=25,
+          order.terms = c(1, 3, 4, 2, 5, 6))
+```
+
+```{r include=FALSE}
+round(coef(summary(fit_posFR)), 3)
+round(coef(summary(fit_negFR)), 3)
+```
+
+# Dyadic correspondence: OpenFace models
+
+```{r include=FALSE}
+# Read in data
+fit_dat_smooth <- read.csv("~/firstyearproject/openfaceprocess_pt2_smooth.csv")
+```
+
+```{r echo=TRUE}
+# Contrast matrix
+mat1 <- rbind(c(1, -0.5, -0.5), # control vs. (depressed + self-harm) / 2
+             c(0, -1, 1))       # depressed vs. self-harm
+cMat1 <- MASS::ginv(mat1)
+```
+
+Positive emotion AUs: AU06, AU12, and AU25.
+
+## OpenFace positive emotion models
+
+```{r echo=TRUE}
+mod06 <- lmer(AU06_r_mother ~ AU06_r_daughter * GROUP + (AU06_r_daughter | ID),
+                  data = fit_dat_smooth,
+                  contrasts = list(GROUP = cMat1))
+```
+
+```{r echo=FALSE}
+mod06 <- lmer(AU06_r_mother ~ AU06_r_daughter * GROUP + (AU06_r_daughter | ID),
+                  data = fit_dat_smooth,
+                  contrasts = list(GROUP = cMat1))
+
+tab_model(mod06,
+          pred.labels = c("Intercept's intercept", "Slope's intercept", 
+                          "Intercept C1", "Intercept C2", "Slope C1", "Slope C2"),
+          dv.labels = "Predicting mother AU06",
+          title = NULL, 
+          show.est = TRUE, string.est = "Coefficient",
+          show.stat = TRUE, string.stat = "t",
+          p.threshold = 0.05, p.style=c("numeric"),
+          show.ci = FALSE, show.se = TRUE, string.se = "SE",
+          digits = 2, digits.p = 3, emph.p = TRUE, wrap.labels=25,
+          order.terms = c(1, 3, 4, 2, 5, 6))
+```
+
+```{echo=TRUE}
+mod12 <- lmer(AU12_r_mother ~ AU12_r_daughter * GROUP + (AU12_r_daughter | ID),
+                  data = fit_dat_smooth,
+                  contrasts = list(GROUP = cMat1))
+```
+
+```{r echo=FALSE}
+mod12 <- lmer(AU12_r_mother ~ AU12_r_daughter * GROUP + (AU12_r_daughter | ID),
+                  data = fit_dat_smooth,
+                  contrasts = list(GROUP = cMat1))
+
+tab_model(mod12,
+          pred.labels = c("Intercept's intercept", "Slope's intercept", 
+                          "Intercept C1", "Intercept C2", "Slope C1", "Slope C2"),
+          dv.labels = "Predicting mother AU12",
+          title = NULL, 
+          show.est = TRUE, string.est = "Coefficient",
+          show.stat = TRUE, string.stat = "t",
+          p.threshold = 0.05, p.style=c("numeric"),
+          show.ci = FALSE, show.se = TRUE, string.se = "SE",
+          digits = 2, digits.p = 3, emph.p = TRUE, wrap.labels=25,
+          order.terms = c(1, 3, 4, 2, 5, 6))
+```
+
+```{echo=TRUE}
+mod25 <- lmer(AU25_r_mother ~ AU25_r_daughter * GROUP + (AU25_r_daughter | ID),
+                  data = fit_dat_smooth,
+                  contrasts = list(GROUP = cMat1))
+```
+
+```{r echo=FALSE}
+mod25 <- lmer(AU25_r_mother ~ AU25_r_daughter * GROUP + (AU25_r_daughter | ID),
+                  data = fit_dat_smooth,
+                  contrasts = list(GROUP = cMat1))
+
+tab_model(mod25,
+          pred.labels = c("Intercept's intercept", "Slope's intercept", 
+                          "Intercept C1", "Intercept C2", "Slope C1", "Slope C2"),
+          dv.labels = "Predicting mother AU25",
+          title = NULL, 
+          show.est = TRUE, string.est = "Coefficient",
+          show.stat = TRUE, string.stat = "t",
+          p.threshold = 0.05, p.style=c("numeric"),
+          show.ci = FALSE, show.se = TRUE, string.se = "SE",
+          digits = 2, digits.p = 3, emph.p = TRUE, wrap.labels=25,
+          order.terms = c(1, 3, 4, 2, 5, 6))
+```
+
+```{r include=FALSE}
+round(coef(summary(fit_posFR)), 3)
+round(coef(summary(mod06)), 3)
+round(coef(summary(mod12)), 3)
+round(coef(summary(mod25)), 3)
+```
+
+## OpenFace negative emotion models
+
+Negative emotion AUs: AU04, AU05, AU09, and AU10. 
+
+```{r echo=TRUE}
+mod04 <- lmer(AU04_r_mother ~ AU04_r_daughter * GROUP + (AU04_r_daughter | ID),
+                  data = fit_dat_smooth,
+                  contrasts = list(GROUP = cMat1))
+```
+
+```{r echo=FALSE}
+mod04 <- lmer(AU04_r_mother ~ AU04_r_daughter * GROUP + (AU04_r_daughter | ID),
+                  data = fit_dat_smooth,
+                  contrasts = list(GROUP = cMat1))
+
+tab_model(mod04,
+          pred.labels = c("Intercept's intercept", "Slope's intercept", 
+                          "Intercept C1", "Intercept C2", "Slope C1", "Slope C2"),
+          dv.labels = "Predicting mother AU04",
+          title = NULL, 
+          show.est = TRUE, string.est = "Coefficient",
+          show.stat = TRUE, string.stat = "t",
+          p.threshold = 0.05, p.style=c("numeric"),
+          show.ci = FALSE, show.se = TRUE, string.se = "SE",
+          digits = 2, digits.p = 3, emph.p = TRUE, wrap.labels=25,
+          order.terms = c(1, 3, 4, 2, 5, 6))
+```
+
+```{r echo=TRUE}
+mod05 <- lmer(AU05_r_mother ~ AU05_r_daughter * GROUP + (AU05_r_daughter | ID),
+                  data = fit_dat_smooth,
+                  contrasts = list(GROUP = cMat1))
+```
+
+```{r echo=FALSE}
+mod05 <- lmer(AU05_r_mother ~ AU05_r_daughter * GROUP + (AU05_r_daughter | ID),
+                  data = fit_dat_smooth,
+                  contrasts = list(GROUP = cMat1))
+
+tab_model(mod05,
+          pred.labels = c("Intercept's intercept", "Slope's intercept", 
+                          "Intercept C1", "Intercept C2", "Slope C1", "Slope C2"),
+          dv.labels = "Predicting mother AU05",
+          title = NULL, 
+          show.est = TRUE, string.est = "Coefficient",
+          show.stat = TRUE, string.stat = "t",
+          p.threshold = 0.05, p.style=c("numeric"),
+          show.ci = FALSE, show.se = TRUE, string.se = "SE",
+          digits = 2, digits.p = 3, emph.p = TRUE, wrap.labels=25,
+          order.terms = c(1, 3, 4, 2, 5, 6))
+```
+
+```{r echo=TRUE}
+mod09 <- lmer(AU09_r_mother ~ AU09_r_daughter * GROUP + (AU09_r_daughter | ID),
+                  data = fit_dat_smooth,
+                  contrasts = list(GROUP = cMat1))
+```
+
+```{r echo=FALSE}
+mod09 <- lmer(AU09_r_mother ~ AU09_r_daughter * GROUP + (AU09_r_daughter | ID),
+                  data = fit_dat_smooth,
+                  contrasts = list(GROUP = cMat1))
+
+tab_model(mod09,
+          pred.labels = c("Intercept's intercept", "Slope's intercept", 
+                          "Intercept C1", "Intercept C2", "Slope C1", "Slope C2"),
+          dv.labels = "Predicting mother AU09",
+          title = NULL, 
+          show.est = TRUE, string.est = "Coefficient",
+          show.stat = TRUE, string.stat = "t",
+          p.threshold = 0.05, p.style=c("numeric"),
+          show.ci = FALSE, show.se = TRUE, string.se = "SE",
+          digits = 2, digits.p = 3, emph.p = TRUE, wrap.labels=25,
+          order.terms = c(1, 3, 4, 2, 5, 6))
+```
+
+```{r echo=TRUE}
+mod10 <- lmer(AU10_r_mother ~ AU10_r_daughter * GROUP + (AU10_r_daughter | ID),
+                  data = fit_dat_smooth,
+                  contrasts = list(GROUP = cMat1))
+```
+
+```{r echo=FALSE}
+mod10 <- lmer(AU10_r_mother ~ AU10_r_daughter * GROUP + (AU10_r_daughter | ID),
+                  data = fit_dat_smooth,
+                  contrasts = list(GROUP = cMat1))
+
+tab_model(mod10,
+          pred.labels = c("Intercept's intercept", "Slope's intercept", 
+                          "Intercept C1", "Intercept C2", "Slope C1", "Slope C2"),
+          dv.labels = "Predicting mother AU10",
+          title = NULL, 
+          show.est = TRUE, string.est = "Coefficient",
+          show.stat = TRUE, string.stat = "t",
+          p.threshold = 0.05, p.style=c("numeric"),
+          show.ci = FALSE, show.se = TRUE, string.se = "SE",
+          digits = 2, digits.p = 3, emph.p = TRUE, wrap.labels=25,
+          order.terms = c(1, 3, 4, 2, 5, 6))
+```
+
+```{r include=FALSE}
+round(coef(summary(fit_negFR)), 3)
+round(coef(summary(mod04)), 3)
+round(coef(summary(mod05)), 3)
+round(coef(summary(mod09)), 3)
+round(coef(summary(mod10)), 3)
+```
+
+# Effect of age on dyadic correspondence
+
+```{r include=FALSE}
+# Read in data
+use_dat <- read.csv("~/firstyearproject/openfaceprocess_pt2_smooth.csv")
+
+# Remove ID 164 because you should...
+use_dat <- use_dat[use_dat$ID != 164, ]
+
+# Look at clipIDs
+print(unique(use_dat$ID))
+
+# Are there any NA values?
+colSums(is.na(use_dat))
+
+# How many IDs are there?
+length(unique(use_dat$ID))
+
+# Look at clipIDs
+print(unique(use_dat$ID))
+
+# Is it the right class?
+class(use_dat$AU01_r_daughter) # Should be numeric
+
+# Read in survey data
+survey <- read_sav("~/firstyearproject/FinalDissertationData.sav")
+surveyage <- survey[c("ID", "AgeChild")]
+rm(survey)
+
+# Merge with use_dat
+use_dat <- merge(use_dat, surveyage, by="ID")
+rm(surveyage)
+```
+
+```{r include=FALSE}
+# Effect of age on positive affect correspondence
+# Non-smoothed data used here
+cor_dat <- use_dat %>%
+  #merge(surveyage, by = "ID") %>%
+  dplyr::group_by(ID, GROUP) %>%
+  dplyr::filter(ID!="164") %>% # this dyad had only 3 10-second clips
+  dplyr::summarize(AU04 = cor(AU04_r_mother, AU04_r_daughter, use="complete.obs"),
+            AU05 = cor(AU05_r_mother, AU05_r_daughter, use="complete.obs"),
+            AU06 = cor(AU06_r_mother, AU06_r_daughter, use="complete.obs"),
+            AU09 = cor(AU09_r_mother, AU09_r_daughter, use="complete.obs"),
+            AU10 = cor(AU10_r_mother, AU10_r_daughter, use="complete.obs"),
+            AU12 = cor(AU12_r_mother, AU12_r_daughter, use="complete.obs"),
+            AU25 = cor(AU25_r_mother, AU25_r_daughter, use="complete.obs"),
+            age = first(AgeChild))
+rm(use_dat)
+```
+
+## Action Unit 4
+
+```{r}
+# Correlation of child age with AU04 correspondence
+cor_p <- with(cor_dat, cor.test(age, AU04))
+qplot(x = age, y = AU04, data = cor_dat,
+      geom = c("point", "smooth"), method = "lm",
+      xlab = "Daughter Age (Years)",
+      ylab = "Action Unit 4 Correspondence") +
+  annotate("text", x = 14, y = .5,
+           label = paste0("r = ", round(cor_p$estimate, 2), 
+                          "\np = ", round(cor_p$p.value, 3)), size = 5) +
+  scale_x_continuous(breaks = 13:18) +
+  theme_minimal(base_size = 18)
+
+# Look at age-positive affect correspondence correlations within groups 
+with(cor_dat %>% filter(GROUP=="control"), cor.test(AU04, age, method = "pearson"))
+with(cor_dat %>% filter(GROUP=="depressed"), cor.test(AU04, age, method = "pearson"))
+with(cor_dat %>% filter(GROUP=="self-harm"), cor.test(AU04, age, method = "pearson"))
+```
+
+```{r}
+cor_p <- with(cor_dat, cor.test(age, AU04))
+qplot(x = age, y = AU04, data = cor_dat, color = GROUP,
+      geom = c("point", "smooth"), method = "lm",
+      xlab = "Daughter Age (Years)",
+      ylab = "Action Unit 4 Correspondence")
+```
+
+## Action Unit 5
+
+```{r}
+# Correlation of child age with AU05 correspondence
+cor_p <- with(cor_dat, cor.test(age, AU05))
+qplot(x = age, y = AU05, data = cor_dat,
+      geom = c("point", "smooth"), method = "lm",
+      xlab = "Daughter Age (Years)",
+      ylab = "Action Unit 5 Correspondence") +
+  annotate("text", x = 13.5, y = .6,
+           label = paste0("r = ", round(cor_p$estimate, 2), 
+                          "\np = ", round(cor_p$p.value, 3)), size = 5) +
+  scale_x_continuous(breaks = 13:18) +
+  theme_minimal(base_size = 18)
+
+# Look at age-positive affect correspondence correlations within groups 
+with(cor_dat %>% filter(GROUP=="control"), cor.test(AU05, age, method = "pearson"))
+with(cor_dat %>% filter(GROUP=="depressed"), cor.test(AU05, age, method = "pearson"))
+with(cor_dat %>% filter(GROUP=="self-harm"), cor.test(AU05, age, method = "pearson"))
+```
+
+```{r}
+cor_p <- with(cor_dat, cor.test(age, AU05))
+qplot(x = age, y = AU05, data = cor_dat, color = GROUP,
+      geom = c("point", "smooth"), method = "lm",
+      xlab = "Daughter Age (Years)",
+      ylab = "Action Unit 5 Correspondence")
+```
+
+## Action Unit 6
+
+```{r}
+# Correlation of child age with AU06 correspondence
+cor_p <- with(cor_dat, cor.test(age, AU06))
+qplot(x = age, y = AU06, data = cor_dat,
+      geom = c("point", "smooth"), method = "lm",
+      xlab = "Daughter Age (Years)",
+      ylab = "Action Unit 6 Correspondence") +
+  annotate("text", x = 13.5, y = .6,
+           label = paste0("r = ", round(cor_p$estimate, 2), 
+                          "\np = ", round(cor_p$p.value, 3)), size = 5) +
+  scale_x_continuous(breaks = 13:18) +
+  theme_minimal(base_size = 18)
+
+# Look at age-positive affect correspondence correlations within groups 
+with(cor_dat %>% filter(GROUP=="control"), cor.test(AU06, age, method = "pearson"))
+with(cor_dat %>% filter(GROUP=="depressed"), cor.test(AU06, age, method = "pearson"))
+with(cor_dat %>% filter(GROUP=="self-harm"), cor.test(AU06, age, method = "pearson"))
+```
+
+```{r}
+cor_p <- with(cor_dat, cor.test(age, AU06))
+qplot(x = age, y = AU06, data = cor_dat, color = GROUP,
+      geom = c("point", "smooth"), method = "lm",
+      xlab = "Daughter Age (Years)",
+      ylab = "Action Unit 6 Correspondence")
+```
+
+## Action Unit 9
+
+```{r}
+# Correlation of child age with AU09 correspondence
+cor_p <- with(cor_dat, cor.test(age, AU09))
+qplot(x = age, y = AU09, data = cor_dat,
+      geom = c("point", "smooth"), method = "lm",
+      xlab = "Daughter Age (Years)",
+      ylab = "Action Unit 9 Correspondence") +
+  annotate("text", x = 13.5, y = .6,
+           label = paste0("r = ", round(cor_p$estimate, 2), 
+                          "\np = ", round(cor_p$p.value, 3)), size = 5) +
+  scale_x_continuous(breaks = 13:18) +
+  theme_minimal(base_size = 18)
+
+# Look at age-positive affect correspondence correlations within groups 
+with(cor_dat %>% filter(GROUP=="control"), cor.test(AU09, age, method = "pearson"))
+with(cor_dat %>% filter(GROUP=="depressed"), cor.test(AU09, age, method = "pearson"))
+with(cor_dat %>% filter(GROUP=="self-harm"), cor.test(AU09, age, method = "pearson"))
+```
+
+```{r}
+cor_p <- with(cor_dat, cor.test(age, AU09))
+qplot(x = age, y = AU09, data = cor_dat, color = GROUP,
+      geom = c("point", "smooth"), method = "lm",
+      xlab = "Daughter Age (Years)",
+      ylab = "Action Unit 9 Correspondence")
+```
+
+## Action Unit 10
+
+```{r}
+# Correlation of child age with AU10 correspondence
+cor_p <- with(cor_dat, cor.test(age, AU10))
+qplot(x = age, y = AU10, data = cor_dat,
+      geom = c("point", "smooth"), method = "lm",
+      xlab = "Daughter Age (Years)",
+      ylab = "Action Unit 4 Correspondence") +
+  annotate("text", x = 13.5, y = .6,
+           label = paste0("r = ", round(cor_p$estimate, 2), 
+                          "\np = ", round(cor_p$p.value, 3)), size = 5) +
+  scale_x_continuous(breaks = 13:18) +
+  theme_minimal(base_size = 18)
+
+# Look at age-positive affect correspondence correlations within groups 
+with(cor_dat %>% filter(GROUP=="control"), cor.test(AU10, age, method = "pearson"))
+with(cor_dat %>% filter(GROUP=="depressed"), cor.test(AU10, age, method = "pearson"))
+with(cor_dat %>% filter(GROUP=="self-harm"), cor.test(AU10, age, method = "pearson"))
+```
+
+```{r}
+cor_p <- with(cor_dat, cor.test(age, AU10))
+qplot(x = age, y = AU10, data = cor_dat, color = GROUP,
+      geom = c("point", "smooth"), method = "lm",
+      xlab = "Daughter Age (Years)",
+      ylab = "Action Unit 10 Correspondence")
+```
+
+## Action Unit 12
+
+```{r}
+# Correlation of child age with AU12 correspondence
+cor_p <- with(cor_dat, cor.test(age, AU12))
+qplot(x = age, y = AU12, data = cor_dat,
+      geom = c("point", "smooth"), method = "lm",
+      xlab = "Daughter Age (Years)",
+      ylab = "Action Unit 4 Correspondence") +
+  annotate("text", x = 13.5, y = .6,
+           label = paste0("r = ", round(cor_p$estimate, 2), 
+                          "\np = ", round(cor_p$p.value, 3)), size = 5) +
+  scale_x_continuous(breaks = 13:18) +
+  theme_minimal(base_size = 18)
+
+# Look at age-positive affect correspondence correlations within groups 
+with(cor_dat %>% filter(GROUP=="control"), cor.test(AU12, age, method = "pearson"))
+with(cor_dat %>% filter(GROUP=="depressed"), cor.test(AU12, age, method = "pearson"))
+with(cor_dat %>% filter(GROUP=="self-harm"), cor.test(AU12, age, method = "pearson"))
+```
+
+```{r}
+cor_p <- with(cor_dat, cor.test(age, AU12))
+qplot(x = age, y = AU12, data = cor_dat, color = GROUP,
+      geom = c("point", "smooth"), method = "lm",
+      xlab = "Daughter Age (Years)",
+      ylab = "Action Unit 12 Correspondence")
+```
+
+## Action Unit 25
+
+```{r}
+# Correlation of child age with AU25 correspondence
+cor_p <- with(cor_dat, cor.test(age, AU25))
+qplot(x = age, y = AU25, data = cor_dat,
+      geom = c("point", "smooth"), method = "lm",
+      xlab = "Daughter Age (Years)",
+      ylab = "Action Unit 4 Correspondence") +
+  annotate("text", x = 13.5, y = .6,
+           label = paste0("r = ", round(cor_p$estimate, 2), 
+                          "\np = ", round(cor_p$p.value, 3)), size = 5) +
+  scale_x_continuous(breaks = 13:18) +
+  theme_minimal(base_size = 18)
+
+# Look at age-positive affect correspondence correlations within groups 
+with(cor_dat %>% filter(GROUP=="control"), cor.test(AU25, age, method = "pearson"))
+with(cor_dat %>% filter(GROUP=="depressed"), cor.test(AU25, age, method = "pearson"))
+with(cor_dat %>% filter(GROUP=="self-harm"), cor.test(AU25, age, method = "pearson"))
+```
+
+```{r}
+cor_p <- with(cor_dat, cor.test(age, AU25))
+qplot(x = age, y = AU25, data = cor_dat, color = GROUP,
+      geom = c("point", "smooth"), method = "lm",
+      xlab = "Daughter Age (Years)",
+      ylab = "Action Unit 25 Correspondence")
+```
+
+```{r include=FALSE}
+rm(cor_dat)
+rm(cor_p)
+```
