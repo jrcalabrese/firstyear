@@ -10,4 +10,4 @@ This project was presented to faculty and students on May 12th 2021.
 
 ## Bounties 
 
-Brownie points awarded to anyone who finds errors.
+Brownie points are awarded to anyone who finds errors.
